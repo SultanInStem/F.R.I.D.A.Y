@@ -21,7 +21,7 @@ GRIP_DWELL_S = 1.5     # time for the gripper to finish closing/opening
 #   2. run get_angles.py, paste the result here
 HOME_ANGLES   = [0, 0, 0, 0, 0, 0]
 LIFT_ANGLES   = [0, 20, 20, 0, 0, 0]      # <-- RETEACH: clear of the platform
-BASKET_ANGLES = [0, -40, 0, 0, 90, 0]    # <-- RETEACH: over the basket
+BASKET_ANGLES = [0, 40, 0, 0, -90, 0]    # <-- RETEACH: over the basket
  
 JOINT_LIMITS = [(-168, 168), (-135, 135), (-145, 145),
                 (-148, 148), (-168, 168), (-175, 175)]
