@@ -4,8 +4,6 @@ import cv2
 import warnings
 import json
 import time
-import csv
-import os
 import socket
 
 # ─────────────────────────────────────────────
@@ -25,15 +23,14 @@ with open("cam2base.json") as f:
 GRIPPER_LENGTH = 0.13   # flange-to-tip, measured
 
 # ─────────────────────────────────────────────
-# EXPERIMENT CONFIG  <-- fix these before trial 1
+# PICK CONFIG
 # ─────────────────────────────────────────────
-CSV_PATH      = "experiment_b_log.csv"
 PI_HOST       = "192.168.10.2"
 PI_PORT       = 65432
 PI_TIMEOUT    = 60.0     # s to wait for the Pi to finish the pick and ack
 GRIPPER_VALUE = 20       # 0 = closed, 100 = open
 GRIPPER_SPEED = 40
-COOLDOWN_S    = 3.0      # dead time after a trial before re-arming
+COOLDOWN_S    = 3.0      # dead time after a pick before re-arming
 
 # ─────────────────────────────────────────────
 # MODEL CONFIG
@@ -41,7 +38,7 @@ COOLDOWN_S    = 3.0      # dead time after a trial before re-arming
 MODEL_PATH  = "./AI_model/yolov8n_apples/my_model.onnx"
 NAMES_PATH  = "./AI_model/yolov8n_apples/my_model.names"
 INPUT_SIZE  = (640, 640)
-CONF_THRESH = 0.60      # MUST match the value reported in Table I
+CONF_THRESH = 0.60
 NMS_THRESH  = 0.4
 TARGET_CLASS = "apple"   # only pick this class; set to None to pick any
 
@@ -50,7 +47,7 @@ TARGET_CLASS = "apple"   # only pick this class; set to None to pick any
 # ─────────────────────────────────────────────
 DETECTION_FRAMES     = 15      # consecutive stable frames required
 STABILITY_TOL        = 0.010   # m - max SD across the buffer on every axis
-CENTER_THRESHOLD     = 9999      # px
+CENTER_THRESHOLD     = 9999    # px
 BRIGHTNESS_THRESHOLD = 10
 DEPTH_PATCH          = 5       # median over a DEPTH_PATCH x DEPTH_PATCH window
 frame_center_x       = 640 // 2
@@ -105,36 +102,6 @@ def send_to_pi(joint_deg, gripper_value, gripper_speed):
         return False, "TIMEOUT"
     except socket.error as e:
         return False, f"SOCKET_ERROR:{e}"
-
-
-# ─────────────────────────────────────────────
-# CSV
-# ─────────────────────────────────────────────
-CSV_FIELDS = [
-    "trial", "target_id", "timestamp",
-    "target_x_mm", "target_y_mm", "target_z_mm",
-    "confidence", "pred_class", "detected",
-    "outcome", "failure_mode", "cycle_time_s",
-    "ik_ok", "pi_reply", "notes",
-]
-
-
-def next_trial_number(path):
-    if not os.path.exists(path):
-        return 1
-    with open(path, newline="") as f:
-        return sum(1 for _ in csv.DictReader(f)) + 1
-
-
-def append_row(path, row):
-    exists = os.path.exists(path)
-    with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        if not exists:
-            w.writeheader()
-        w.writerow(row)
-        f.flush()
-        os.fsync(f.fileno())
 
 
 # ─────────────────────────────────────────────
@@ -235,12 +202,11 @@ align = rs.align(rs.stream.color)
 net = load_model(MODEL_PATH)
 class_names = load_classes(NAMES_PATH)
 print(f"Loaded {len(class_names)} classes: {class_names}")
-
-trial = next_trial_number(CSV_PATH)
-print(f"Next trial number: {trial}   (logging to {CSV_PATH})")
 print(f"CONF_THRESH={CONF_THRESH}  target class={TARGET_CLASS}  "
       f"stability={STABILITY_TOL*1000:.0f} mm over {DETECTION_FRAMES} frames")
+print("Picking continuously. Press q in the video window to stop.")
 
+pick_count = 0
 coords_buffer = []
 conf_buffer = []
 armed_at = 0.0
@@ -307,12 +273,12 @@ try:
             conf_buffer.clear()
 
         cv2.putText(color_image,
-                    f"trial {trial}  stable {len(coords_buffer)}/{DETECTION_FRAMES}"
+                    f"picks {pick_count}  stable {len(coords_buffer)}/{DETECTION_FRAMES}"
                     + ("  [cooldown]" if in_cooldown else ""),
                     (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
         # ─────────────────────────────────────
-        # STABLE DETECTION -> RUN THE TRIAL
+        # STABLE DETECTION -> PICK
         # ─────────────────────────────────────
         if len(coords_buffer) >= DETECTION_FRAMES:
             arr = np.array(coords_buffer)
@@ -320,74 +286,35 @@ try:
             sd = arr.std(axis=0)
 
             if np.all(sd < STABILITY_TOL):
-                # ========== TIMER STARTS ==========
                 t0 = time.perf_counter()
+                pick_count += 1
 
-                label = best[0]
-                mean_conf = float(np.mean(conf_buffer))
-                print(f"\n=== TRIAL {trial} ===")
+                print(f"\n=== PICK {pick_count} ===")
                 print(f"  target  : {avg[0]*1000:.1f}, {avg[1]*1000:.1f}, "
                       f"{avg[2]*1000:.1f} mm   (SD {sd[0]*1000:.1f}/"
                       f"{sd[1]*1000:.1f}/{sd[2]*1000:.1f})")
-                print(f"  class   : {label}  conf {mean_conf:.2f}")
+                print(f"  class   : {best[0]}  conf {np.mean(conf_buffer):.2f}")
 
                 angles = compute_angles(list(avg))
-                ik_ok = len(angles) > 0
-                pi_reply = "NOT_SENT"
-
-                if ik_ok:
+                if angles is not None and len(angles) > 0:
                     joint_deg = angles_to_degrees(angles)
                     print(f"  angles  : {joint_deg}")
                     ok, pi_reply = send_to_pi(joint_deg, GRIPPER_VALUE, GRIPPER_SPEED)
                     print(f"  pi      : {pi_reply}")
-
-                # ========== TIMER STOPS ==========
-                cycle_time = time.perf_counter() - t0
-                print(f"  cycle   : {cycle_time:.2f} s")
-
-                # ---- manual outcome entry ----
-                if not ik_ok:
-                    outcome, fmode = "F", "5"
-                    print("  auto-scored F / mode 5 (IK failure)")
                 else:
-                    outcome = ""
-                    while outcome not in ("S", "F"):
-                        outcome = input("  outcome [S/F]: ").strip().upper()
-                    fmode = ""
-                    if outcome == "F":
-                        while fmode not in ("1", "2", "3", "4", "5", "6"):
-                            fmode = input("  failure mode [1-6]: ").strip()
-                notes = input("  notes (enter to skip): ").strip()
+                    print("  skipped : IK failed")
 
-                append_row(CSV_PATH, {
-                    "trial": trial,
-                    "target_id": f"T{trial:02d}",
-                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "target_x_mm": round(avg[0] * 1000, 1),
-                    "target_y_mm": round(avg[1] * 1000, 1),
-                    "target_z_mm": round(avg[2] * 1000, 1),
-                    "confidence": round(mean_conf, 3),
-                    "pred_class": label,
-                    "detected": "Y",
-                    "outcome": outcome,
-                    "failure_mode": fmode,
-                    "cycle_time_s": round(cycle_time, 2),
-                    "ik_ok": "Y" if ik_ok else "N",
-                    "pi_reply": pi_reply,
-                    "notes": notes,
-                })
-                print(f"  logged trial {trial}\n")
-                trial += 1
+                print(f"  cycle   : {time.perf_counter() - t0:.2f} s")
                 armed_at = time.time()
 
             coords_buffer.clear()
             conf_buffer.clear()
 
-        cv2.imshow("Experiment B", color_image)
+        cv2.imshow("Autonomous picking", color_image)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
-    print(f"Stopped. {trial - 1} trials in {CSV_PATH}")
+    print(f"Stopped after {pick_count} pick attempts.")
