@@ -58,7 +58,7 @@ RESULT_FILE = "cam2base.json"
 # =====================================================================
 # Robot / automation settings
 # =====================================================================
-ROBOT_IP = "192.168.10.2"   # Pi over the direct Ethernet link
+ROBOT_IP = "129.8.231.227"   # Pi over the direct Ethernet link
 ROBOT_PORT = 9000
 URDF_PATH = "mycobot_320pi.urdf"
 
