@@ -27,10 +27,10 @@ GRIPPER_LENGTH = 0.13   # flange-to-tip, measured
 # ─────────────────────────────────────────────
 POS_TOL_M      = 0.005   # max flange position residual
 ORIENT_TOL_DEG = 5.0     # max angle between achieved and requested tool axis
-# Fallback tilts from vertical, tried in order when straight-down fails.
-# For each tilt: outward (tip away from base, extends reach), inward
-# (tip toward base, helps close-in targets), then left/right sideways.
-APPROACH_TILTS_DEG = [15, 30, 45]
+# Approaches tried in order: straight down, then tilted outward (tip leaning
+# away from the base). An outward tilt pulls the flange L*sin(tilt) toward
+# the base, extending reach: ~34 mm at 15 deg, ~65 mm at 30 deg.
+APPROACH_TILTS_DEG = [0, 15, 30]
 # Same limits pick_server.py enforces - reject here so we try the next
 # orientation instead of getting FAIL,LIMIT back from the Pi.
 JOINT_LIMITS = [(-168, 168), (-135, 135), (-145, 145),
@@ -77,18 +77,14 @@ def approach_candidates(fruit):
     unit vector the gripper points along (flange -> fingertip), in base frame.
     """
     down = np.array([0.0, 0.0, -1.0])
-    yield "down", down
-
     radial = np.array([fruit[0], fruit[1], 0.0])
     n = np.linalg.norm(radial)
     radial = radial / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
-    tangent = np.cross([0.0, 0.0, 1.0], radial)
 
     for tilt in APPROACH_TILTS_DEG:
         c, s = np.cos(np.radians(tilt)), np.sin(np.radians(tilt))
-        for name, horiz in (("out", radial), ("in", -radial),
-                            ("left", tangent), ("right", -tangent)):
-            yield f"{name} {tilt}deg", c * down + s * horiz
+        name = "down" if tilt == 0 else f"out {tilt}deg"
+        yield name, c * down + s * radial
 
 
 def solve_ik(flange_target, tool_axis):
