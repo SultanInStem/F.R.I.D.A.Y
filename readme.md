@@ -14,7 +14,7 @@ Innovation (F3) Coalition.
 ## Table of contents
 
 1. [System overview](#1-system-overview)
-2. [Repository layout](#2-repository-layout)
+2. [Demo](#2-demo)
 3. [Installation](#3-installation)
 4. [Coordinate frames and conventions](#4-coordinate-frames-and-conventions)
 5. [Running the system](#5-running-the-system)
@@ -48,7 +48,7 @@ cross the wire.
 │                                                                    │                 │
 │                                      + GRIPPER_LENGTH on Z (flange, not fingertip)   │
 │                                                                    │                 │
-│                                              ikpy inverse_kinematics, mode "Z"       │
+│                                    ikpy inverse_kinematics, position-only            │
 │                                                                    ▼                 │
 │                                                        6 joint angles (degrees)      │
 └────────────────────────────────────────────────────────────┬─────────────────────────┘
@@ -69,52 +69,49 @@ coupling between them, which also means either side can be tested in isolation.
 
 ---
 
-## 2. Repository layout
+## 2. Demo
 
-```
-.
-├── arm_controls/                  # runs ON the Raspberry Pi (inside the arm)
-│   ├── commands/
-│   │   ├── main.py                # serial handle + all primitive arm operations
-│   │   └── pick_server.py         # TCP server: receives joint targets, runs pick cycle
-│   ├── scripts/                   # thin interactive CLI wrappers around main.py
-│   │   ├── get_angles.py          # print current joint angles (radians, ikpy vector)
-│   │   ├── get_position.py        # print current flange position via FK
-│   │   ├── set_angles.py          # drive joints directly (radians in, degrees out)
-│   │   ├── move_to_location.py    # drive the flange to an (x,y,z) target in metres
-│   │   ├── set_gripper.py         # open/close the gripper by value
-│   │   ├── reset.py               # home all joints, recalibrate gripper
-│   │   ├── calibrate_joints.py    # hand-align to zero marks, save servo calibration
-│   │   ├── calibrate_gripper.py   # set the gripper's fully-open reference
-│   │   └── diagnostic.py          # query firmware versions over serial
-│   ├── utils/
-│   │   ├── funcs.py               # ikpy chain, compute_ik / compute_fk helpers
-│   │   └── globals.py             # serial port, baud rate, host config
-│   └── mycobot_320pi.urdf         # 8-link chain: base + 6 revolute + gripper
-│
-├── vision_controls/               # runs ON the Jetson
-│   ├── autonomous_test.py         # ★ Experiment B: full closed-loop pick + CSV logging
-│   ├── handeye_calibrate.py       # ★ ChArUco eye-to-hand calibration (board/collect/solve)
-│   ├── cam2base.json              # solved 4×4 camera→base transform + residual
-│   ├── handeye_poses.json         # the 18 captured (joint angles, board pose) pairs
-│   ├── charuco_board.png          # printable 5×7 board, 30 mm squares
-│   ├── mycobot_320pi.urdf         # identical copy of the arm URDF (same MD5)
-│   ├── AI_model/
-│   │   ├── yolov8m_strawberry/    # ★ the model reported in the paper
-│   │   │   ├── my_model.pt        #   Ultralytics checkpoint
-│   │   │   ├── my_model.onnx      #   exported for cv2.dnn
-│   │   │   ├── my_model.names     #   class order: unripe, ripe, rotten
-│   │   │   └── temp.py            #   the .pt → .onnx export call
-│   │   ├── yolov8m_apples/        # earlier fruit model, superseded
-│   │   └── yolov8n_apples/        # bring-up model, superseded
-│   ├── camera/                    # standalone RealSense sanity checks
-│   └── (test.py, manual_test.py)  # superseded — see §10
-│
-├── requirements.txt
-└── current_location.txt           # runtime scratch file written by move_to_location()
-```
+Drop media into a `media/` folder at the repository root and reference it with a
+relative path. GitHub renders GIFs inline; keep each under ~10 MB.
 
-`★` marks the files that matter for reproducing the paper.
+### Full pick cycle
+
+<p align="center">
+  <img src="media/pick_cycle.gif" width="640" alt="Full autonomous pick cycle">
+</p>
+
+*Caption: detection lock → approach → grasp → lift → basket release.*
+
+### Detection
+
+<p align="center">
+  <img src="media/detection_ripe.png" width="310" alt="Ripe detection">
+  <img src="media/detection_mixed.png" width="310" alt="Mixed-ripeness detection">
+</p>
+
+*Caption: live YOLOv8m output with ripe / unripe / rotten labels.*
+
+### Hardware setup
+
+<p align="center">
+  <img src="media/setup.jpg" width="640" alt="Rig overview: myCobot 320 Pi, RealSense D435, Jetson AGX Orin">
+</p>
+
+*Caption: myCobot 320 Pi, overhead RealSense D435, Jetson AGX Orin.*
+
+### Calibration
+
+<p align="center">
+  <img src="media/calibration.gif" width="640" alt="Automatic ChArUco hand-eye calibration">
+</p>
+
+*Caption: `calibrate.py` stepping through calibration poses.*
+
+For a video longer than a few seconds, upload it to YouTube and link a thumbnail:
+
+```markdown
+[![Demo video](media/video_thumbnail.jpg)](https://youtu.be/VIDEO_ID)
+```
 
 ---
 
@@ -135,11 +132,11 @@ pip install opencv-contrib-python==4.10.0.84   # see note below
 
 **The OpenCV pin is not optional.** OpenCV 5.x removed `cv2.calibrateHandEye`
 and `cv2.aruco.interpolateCornersCharuco` from the Python bindings, both of
-which `handeye_calibrate.py` depends on. The script fails fast rather than
+which `calibrate.py` depends on. The script fails fast rather than
 crashing halfway through a capture session:
 
 ```python
-# handeye_calibrate.py:24-28
+# calibrate.py (top of file)
 if not hasattr(cv2, "calibrateHandEye"):
     raise SystemExit(
         f"OpenCV {cv2.__version__} does not expose calibrateHandEye.\n"
@@ -231,23 +228,35 @@ sign flips chosen by quadrant — that approach appears in the legacy scripts
 ```bash
 cd vision_controls
 
-python handeye_calibrate.py board      # writes charuco_board.png
+python calibrate.py board      # writes charuco_board.png
 # print at 300 dpi with scaling OFF, measure a square with calipers,
 # update SQUARE_LENGTH_M / MARKER_LENGTH_M at the top of the file
 
-python handeye_calibrate.py collect    # SPACE to capture, Q to finish
-python handeye_calibrate.py solve      # writes cam2base.json
+python calibrate.py            # AUTO: move arm, capture, solve, write cam2base.json
+python calibrate.py solve      # re-solve from an existing handeye_poses.json
 ```
 
-Capture ~18 poses with **varied orientation**, not just varied position. Hand-eye
-calibration cannot observe the rotational component from pure translation, and
-the usual symptom of a translation-only capture set is a plausible-looking
-transform with a large residual. The solver reports RMS scatter of the board
-origin expressed in the flange frame and warns above 5 mm.
+Before running AUTO mode, leave the arm in a pose where the camera can see the
+board, or set `HOME_ANGLES` at the top of the file. The script then:
 
-Current stored solution: `residual_rms_mm = 6.86` over 18 poses. This number is
-the noise floor for everything downstream — no amount of IK tuning produces
-end-effector accuracy better than the calibration that positions the camera.
+1. Generates `N_POSES` joint configurations by perturbing each joint around home
+   (`PERTURB_DEG`), clipped to the joint limits with a 5° margin.
+2. Moves to each pose, waits `SETTLE_S` for vibration to die out, and keeps the
+   best of `FRAMES_PER_POSE` board detections (PnP reprojection ≤ `MAX_REPROJ_PX`).
+3. Returns home and solves with **every** OpenCV hand-eye method, keeping the one
+   with the lowest residual.
+4. Drops outlier poses (residual > max(3 × median, 3 mm)) and re-solves once.
+5. Writes `cam2base.json` with the transform, RMS residual, pose count, chosen
+   method, and dropped pose indices.
+
+Perturbations are small on the shoulder and elbow (to stay clear of the table
+and boom) and large on the wrist, because hand-eye calibration cannot observe
+the rotational component from pure translation. The solver warns when the RMS
+residual exceeds 5 mm.
+
+The residual is the noise floor for everything downstream — no amount of IK
+tuning produces end-effector accuracy better than the calibration that positions
+the camera.
 
 ### 5.2 Start the arm server (on the Pi)
 
@@ -304,13 +313,10 @@ not (see §9).
 ### 6.2 Inverse kinematics with a residual gate
 
 ```python
-# autonomous_test.py:65-79
 def compute_angles(point_in_base_frame):
     """Returns the full ikpy angle vector (radians), or [] if unreachable."""
     angles = chain.inverse_kinematics(
         point_in_base_frame,
-        [0, 0, -1],
-        orientation_mode="Z",
         optimizer="least_squares",
         max_iter=1000,
     )
@@ -322,15 +328,15 @@ def compute_angles(point_in_base_frame):
     return angles
 ```
 
-Three decisions are encoded here.
+Two decisions are encoded here.
 
-**`orientation_mode="Z"` with `[0, 0, -1]`** constrains the flange's Z axis to
-point straight down at the table, and leaves the other two rotational degrees of
-freedom free for the solver to use. A fixed vertical approach is a deliberate
-design choice, not a limitation of the solver: it makes the reachable set
-predictable, keeps the gripper clear of neighbouring fruit, and removes an
-entire class of orientation-dependent failures from the experiment. This setting
-does not vary per target and should not be made to.
+**Position-only IK.** No target orientation is passed, so the solver is free to
+use all six joints to reach the point. An earlier version constrained the
+flange's Z axis to point straight down (`orientation_mode="Z"`, `[0, 0, -1]`).
+That constraint removed orientation-dependent failures but cost reach: every
+IK failure in the constrained trials clustered beyond ~331 mm from the base.
+Dropping it enlarges the reachable workspace, at the cost of a less predictable
+approach direction — the gripper may arrive tilted rather than vertical.
 
 **The residual check is the reachability test.** ikpy's `inverse_kinematics` is
 a numerical optimiser — it always returns *something*, and for an unreachable
@@ -397,11 +403,13 @@ treated as a direction and the translation would be dropped); and the last line
 adds the flange-to-tip distance.
 
 That last line deserves care. ikpy solves for the **flange**, but the fruit is
-where the **fingertips** need to be. Since the approach is always straight down,
-the correction is a constant `+GRIPPER_LENGTH` on Z: command the flange to sit
-13 cm above the fruit, and the tip lands on it. If the approach direction were
-ever made variable, this scalar would have to become a vector offset along the
-approach axis.
+where the **fingertips** need to be. Adding a constant `+GRIPPER_LENGTH` on Z
+commands the flange to sit 13 cm above the fruit, which puts the tip on it only
+when the gripper points straight down. With position-only IK (§6.2) the approach
+direction is no longer fixed, so for tilted solutions the tip lands off-target
+by up to `GRIPPER_LENGTH · sin(tilt)`. The exact fix is to make the tip the end
+of the kinematic chain — set the `wrist_to_gripper` joint origin in the URDF to
+the measured flange-to-tip distance — and solve for the tip position directly.
 
 `GRIPPER_LENGTH = 0.13` (`autonomous_test.py:27`) is a measured quantity, not a
 datasheet value, and must be re-measured if the end-effector is changed.
@@ -578,51 +586,41 @@ boom and the ChArUco board is mounted to the moving flange. OpenCV's
 so the robot poses must be inverted before being passed in:
 
 ```python
-# handeye_calibrate.py:231-245
-    for s in samples:
-        T_g2b = fk_pose(chain, s["joint_angles_deg"])
-        T_g2b_all.append(T_g2b)
+# calibrate.py — _solve_once()
+    # eye-to-hand: feed the INVERSE of the flange pose
+    R_b2g = [T[:3, :3].T for T in T_g2b]
+    t_b2g = [(-T[:3, :3].T @ T[:3, 3]).reshape(3, 1) for T in T_g2b]
+    R_t2c = [T[:3, :3] for T in T_t2c]
+    t_t2c = [T[:3, 3].reshape(3, 1) for T in T_t2c]
 
-        # eye-to-hand: feed the INVERSE of the flange pose
-        R_gb = T_g2b[:3, :3]
-        t_gb = T_g2b[:3, 3]
-        R_b2g.append(R_gb.T)
-        t_b2g.append(-R_gb.T @ t_gb)
-
-        R_t2c.append(cv2.Rodrigues(np.array(s["rvec_target2cam"]))[0])
-        t_t2c.append(np.array(s["tvec_target2cam"]).reshape(3, 1))
-
-    R_c2b, t_c2b = cv2.calibrateHandEye(
-        R_b2g, t_b2g, R_t2c, t_t2c, method=cv2.CALIB_HAND_EYE_TSAI
-    )
+    R, t = cv2.calibrateHandEye(R_b2g, t_b2g, R_t2c, t_t2c, method=method)
 ```
 
 The inverse of a rigid transform is `R⁻¹ = Rᵀ`, `t⁻¹ = −Rᵀt` — that is exactly
-what the two `append` lines construct. Skipping this inversion is the single
-most common way to get a confident, completely wrong transform out of this
-function; it typically produces a camera position mirrored through the base.
+what the first two lines construct. Skipping this inversion is the single most
+common way to get a confident, completely wrong transform out of this function;
+it typically produces a camera position mirrored through the base.
 
 The residual is then computed independently of the solver, which matters because
 `calibrateHandEye` reports no error metric of its own:
 
 ```python
-# handeye_calibrate.py:250-262
-    pts = []
-    for s, T_g2b in zip(samples, T_g2b_all):
-        T_t2c = np.eye(4)
-        T_t2c[:3, :3] = cv2.Rodrigues(np.array(s["rvec_target2cam"]))[0]
-        T_t2c[:3, 3] = np.array(s["tvec_target2cam"])
-        T_t2b = T_c2b @ T_t2c                 # board in base frame
-        T_t2g = np.linalg.inv(T_g2b) @ T_t2b  # board in flange frame
-        pts.append(T_t2g[:3, 3])
+# calibrate.py — _solve_once()
+    pts = np.array([(np.linalg.inv(Tg) @ T_c2b @ Tt)[:3, 3]
+                    for Tg, Tt in zip(T_g2b, T_t2c)])
+    centroid = pts.mean(axis=0)
+    resid = np.linalg.norm(pts - centroid, axis=1)
 ```
 
 The board is bolted to the flange, so its position *in the flange frame* is a
-fixed physical constant — the same in all 18 samples. Chaining the solved
+fixed physical constant — the same in every sample. Chaining the solved
 transform back through each sample should therefore recover the same point every
 time, and the scatter of those recovered points is a direct, unbiased measure of
-the calibration error. The RMS of that scatter (6.86 mm as stored) is the figure
-to quote as the system's calibration floor.
+the calibration error.
+
+`_best_method()` runs this for every OpenCV hand-eye method and keeps the lowest
+RMS; `solve()` then drops poses whose residual exceeds max(3 × median, 3 mm) and
+re-solves once, provided at least `MIN_SAMPLES` poses remain.
 
 ### 6.9 Detection preprocessing
 
@@ -709,7 +707,7 @@ detection confidence.
 `LIFT_ANGLES` and `BASKET_ANGLES` are taught poses, valid only for one physical
 layout. Re-teach them with `scripts/get_angles.py` whenever the rig moves.
 
-### `vision_controls/handeye_calibrate.py`
+### `vision_controls/calibrate.py`
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -717,6 +715,17 @@ layout. Re-teach them with `scripts/get_angles.py` whenever the rig moves.
 | `SQUARE_LENGTH_M` | 0.030 | **measure the printed board with calipers** |
 | `MARKER_LENGTH_M` | 0.022 | must be strictly less than the square length |
 | `ARUCO_DICT` | `DICT_5X5_100` | marker dictionary |
+| `ROBOT_IP`, `ROBOT_PORT` | — | arm socket address used in AUTO mode |
+| `HOME_ANGLES` | `None` | centre pose; `None` uses the arm's current pose |
+| `N_POSES` | 20 | poses captured, including home |
+| `PERTURB_DEG` | `[10, 8, 8, 20, 20, 30]` | max per-joint perturbation around home |
+| `SPEED` | 10 | `send_angles` speed during capture |
+| `SEED` | 0 | change for a different random pose set |
+| `SETTLE_S` | 1.0 s | dwell after arrival before capturing |
+| `FRAMES_PER_POSE` | 8 | best of N detections kept per pose |
+| `MIN_CORNERS` | 10 | of 24 inner corners required for a valid detection |
+| `MAX_REPROJ_PX` | 1.0 | PnP reprojection error ceiling |
+| `MIN_SAMPLES` | 8 | minimum poses required to solve |
 
 A wrong `SQUARE_LENGTH_M` scales the entire solved transform. It is the first
 thing to check when the residual is large.
@@ -797,7 +806,7 @@ one actually executed.
 
 **4. Two different chain constructions.** `arm_controls/utils/funcs.py:8` builds
 the ikpy chain with no `active_links_mask`, while `autonomous_test.py` and
-`handeye_calibrate.py` both use the masked form. Per §6.1, the unmasked chain
+`calibrate.py` both use the masked form. Per §6.1, the unmasked chain
 solves a different problem. `funcs.py` additionally checks reach against
 `0.5**2` (a 500 mm radius for a 320 mm arm), performs that check *after* the
 solve, and has no residual gate.
@@ -833,11 +842,7 @@ Related: `funcs.py:8` loads `"../mycobot_320pi.urdf"` and `main.py:32` writes
 ultralytics, and onnx, and carries unused entries inherited from the YOLOv5
 requirements file (`gitpython`, `thop`, `seaborn`). Use §3 until it is rebuilt.
 
-**10. `handeye_calibrate.py:204` ignores its `urdf_path` argument** and hardcodes
-`"mycobot_320pi.urdf"`; the default value in the signature names a file that
-does not exist.
-
-**11. Repository hygiene.** Roughly 330 MB of model weights are tracked,
+**10. Repository hygiene.** Roughly 330 MB of model weights are tracked,
 including two near-identical 100 MB ONNX files, giving a ~274 MB `.git`.
 `__pycache__` directories are committed despite `.gitignore`, including an
 orphaned `compute_ik.cpython-312.pyc` with no corresponding source file.
