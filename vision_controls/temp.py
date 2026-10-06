@@ -356,8 +356,8 @@ try:
                     joint_deg = angles_to_degrees(angles)
                     print(f"  approach: {approach}")
                     print(f"  angles  : {joint_deg}")
-                    # ok, pi_reply = send_to_pi(joint_deg, GRIPPER_VALUE, GRIPPER_SPEED)
-                    # print(f"  pi      : {pi_reply}")
+                    ok, pi_reply = send_to_pi(joint_deg, GRIPPER_VALUE, GRIPPER_SPEED)
+                    print(f"  pi      : {pi_reply}")
                 else:
                     print("  skipped : IK failed for every approach")
 
