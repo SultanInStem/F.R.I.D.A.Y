@@ -71,9 +71,6 @@ coupling between them, which also means either side can be tested in isolation.
 
 ## 2. Demo
 
-Drop media into a `media/` folder at the repository root and reference it with a
-relative path. GitHub renders GIFs inline; keep each under ~10 MB.
-
 ### Full pick cycle
 
 <p align="center">
