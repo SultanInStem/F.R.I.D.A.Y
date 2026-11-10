@@ -29,8 +29,8 @@ import numpy as np
 # ─────────────────────────────────────────────
 # MODEL CONFIG
 # ─────────────────────────────────────────────
-MODEL_PATH  = "./AI_model/yolov8m_strawberry/best.onnx"
-NAMES_PATH  = "./AI_model/yolov8m_strawberry/best.names"   # optional
+MODEL_PATH  = "./AI_model/yolo/best.onnx"
+NAMES_PATH  = "./AI_model/yolo/best.names"   # optional
 # Fallback if no .names file and no ONNX metadata. Order MUST match data.yaml.
 DEFAULT_NAMES = ["peduncle", "ripe", "unripe"]
 INPUT_SIZE  = (640, 640)      # must match the imgsz used at export
